@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Domains\Property\Models\Property;
+
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;

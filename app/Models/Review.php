@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Domains\Property\Models\Property;
+
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -17,6 +19,8 @@ class Review extends Model
     public $incrementing = false;
 
     protected $keyType = 'string';
+
+    public $timestamps = false;
 
     protected $fillable = [
         'property_id',
