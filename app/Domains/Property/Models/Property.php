@@ -1,7 +1,21 @@
 <?php
 
-namespace App\Models;
+namespace App\Domains\Property\Models;
 
+use App\Models\Tenant;
+use App\Models\Allotment;
+use App\Models\BookingPaceSnapshot;
+use App\Models\ChannelCredential;
+use App\Models\IcalConnection;
+use App\Models\PmsConnection;
+use App\Models\RatePlan;
+use App\Models\Reservation;
+use App\Models\RevenueMetric;
+use App\Models\Review;
+use App\Models\RoomType;
+use App\Models\Service;
+use App\Models\TaxRate;
+use App\Models\PropertySetting;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
