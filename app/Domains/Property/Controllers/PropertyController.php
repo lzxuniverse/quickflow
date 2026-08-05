@@ -68,4 +68,105 @@ class PropertyController extends Controller
         return redirect()->route('properties.show', ['property' => $property->uuid])
             ->with('success', 'Property updated successfully.');
     }
+
+    public function destroy(Property $property)
+    {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($property) {
+            $propertyId = $property->uuid;
+
+            // 1. Get reservations
+            $reservationIds = \Illuminate\Support\Facades\DB::table('reservations')->where('property_id', $propertyId)->pluck('uuid');
+
+            // 2. Get folios
+            $folioIds = $reservationIds->isNotEmpty() 
+                ? \Illuminate\Support\Facades\DB::table('folios')->whereIn('reservation_id', $reservationIds)->pluck('uuid') 
+                : collect();
+
+            // 3. Get payments and charges
+            $paymentIds = $folioIds->isNotEmpty() 
+                ? \Illuminate\Support\Facades\DB::table('payments')->whereIn('folio_id', $folioIds)->pluck('uuid') 
+                : collect();
+            $chargeIds = $folioIds->isNotEmpty() 
+                ? \Illuminate\Support\Facades\DB::table('charges')->whereIn('folio_id', $folioIds)->pluck('uuid') 
+                : collect();
+
+            // 4. Delete transaction allocations
+            if ($paymentIds->isNotEmpty() || $chargeIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('transaction_allocations')
+                    ->whereIn('payment_id', $paymentIds)
+                    ->orWhereIn('charge_id', $chargeIds)
+                    ->delete();
+            }
+
+            // 5. Delete payments and charges
+            if ($paymentIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('payments')->whereIn('uuid', $paymentIds)->delete();
+            }
+            if ($chargeIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('charges')->whereIn('uuid', $chargeIds)->delete();
+            }
+
+            // 6. Delete folios
+            if ($folioIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('folios')->whereIn('uuid', $folioIds)->delete();
+            }
+
+            // 7. Get room types
+            $roomTypeIds = \Illuminate\Support\Facades\DB::table('room_types')->where('property_id', $propertyId)->pluck('uuid');
+            // Get rate plans
+            $ratePlanIds = \Illuminate\Support\Facades\DB::table('rate_plans')->where('property_id', $propertyId)->pluck('uuid');
+            // Get rooms
+            $roomIds = \Illuminate\Support\Facades\DB::table('rooms')->whereIn('room_type_id', $roomTypeIds)->pluck('uuid');
+
+            // 8. Delete reservation rooms (references room_id and rate_plan_id and reservation_id)
+            if ($reservationIds->isNotEmpty() || $roomTypeIds->isNotEmpty() || $ratePlanIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('reservation_rooms')
+                    ->whereIn('reservation_id', $reservationIds)
+                    ->orWhereIn('room_type_id', $roomTypeIds)
+                    ->orWhereIn('rate_plan_id', $ratePlanIds)
+                    ->delete();
+            }
+
+            // 9. Delete room beds
+            if ($roomIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('room_beds')->whereIn('room_id', $roomIds)->delete();
+                // 10. Delete rooms
+                \Illuminate\Support\Facades\DB::table('rooms')->whereIn('uuid', $roomIds)->delete();
+            }
+
+            // 11. Delete other related tables
+            \Illuminate\Support\Facades\DB::table('property_settings')->where('property_id', $propertyId)->delete();
+            \Illuminate\Support\Facades\DB::table('reviews')->where('property_id', $propertyId)->delete();
+            \Illuminate\Support\Facades\DB::table('revenue_metrics')->where('property_id', $propertyId)->delete();
+            \Illuminate\Support\Facades\DB::table('booking_pace_snapshots')->where('property_id', $propertyId)->delete();
+            \Illuminate\Support\Facades\DB::table('allotments')->where('property_id', $propertyId)->delete();
+            \Illuminate\Support\Facades\DB::table('ical_connections')->where('property_id', $propertyId)->delete();
+            \Illuminate\Support\Facades\DB::table('pms_connections')->where('property_id', $propertyId)->delete();
+            \Illuminate\Support\Facades\DB::table('channel_credentials')->where('property_id', $propertyId)->delete();
+            \Illuminate\Support\Facades\DB::table('services')->where('property_id', $propertyId)->delete();
+            \Illuminate\Support\Facades\DB::table('tax_rates')->where('property_id', $propertyId)->delete();
+
+            // 12. Delete AI conversations and reservation versions
+            if ($reservationIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('ai_conversations')->whereIn('reservation_id', $reservationIds)->delete();
+                \Illuminate\Support\Facades\DB::table('reservation_versions')->whereIn('reservation_id', $reservationIds)->delete();
+                \Illuminate\Support\Facades\DB::table('reservation_guests')->whereIn('reservation_id', $reservationIds)->delete();
+                \Illuminate\Support\Facades\DB::table('reservations')->whereIn('uuid', $reservationIds)->delete();
+            }
+
+            if ($ratePlanIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('rate_plans')->whereIn('uuid', $ratePlanIds)->delete();
+            }
+
+            if ($roomTypeIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('room_types')->whereIn('uuid', $roomTypeIds)->delete();
+            }
+
+            // Finally, delete the property itself
+            $property->delete();
+        });
+
+        return redirect()->route('properties.index')
+            ->with('success', 'Property deleted successfully.');
+    }
 }
