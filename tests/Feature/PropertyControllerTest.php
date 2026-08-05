@@ -152,4 +152,36 @@ class PropertyControllerTest extends TestCase
             $this->markTestSkipped('No properties found in database to validate update.');
         }
     }
+
+    /**
+     * Test that deleting a property works and redirects to the index.
+     */
+    public function test_properties_destroy_deletes_property_and_redirects(): void
+    {
+        $this->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class]);
+
+        $property = Property::first();
+
+        if ($property) {
+            $uuid = $property->uuid;
+            $response = $this->delete(route('properties.destroy', $uuid));
+
+            $response->assertRedirect(route('properties.index'));
+            $response->assertSessionHas('success', 'Property deleted successfully.');
+
+            $this->assertDatabaseMissing('properties', ['uuid' => $uuid]);
+        } else {
+            $this->markTestSkipped('No properties found in database to delete.');
+        }
+    }
+
+    /**
+     * Test that deleting a non-existent property returns 404.
+     */
+    public function test_properties_destroy_returns_404_for_invalid_uuid(): void
+    {
+        $response = $this->delete(route('properties.destroy', '00000000-0000-0000-0000-000000000000'));
+
+        $response->assertStatus(404);
+    }
 }
