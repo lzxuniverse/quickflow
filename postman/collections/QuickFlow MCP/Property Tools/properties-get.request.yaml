@@ -1,0 +1,38 @@
+$kind: http-request
+name: 'properties_get'
+order: 2000
+method: POST
+url: '{{base_url}}/api/mcp'
+headers:
+  - key: Content-Type
+    value: application/json
+  - key: Accept
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "jsonrpc": "2.0",
+      "id": 11,
+      "method": "tools/call",
+      "params": {
+        "name": "properties_get",
+        "arguments": {
+          "property_id": "{{property_id}}"
+        }
+      }
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const res = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("JSON-RPC 2.0", () => pm.expect(res.jsonrpc).to.eql("2.0"));
+      pm.test("No error", () => pm.expect(res).to.not.have.property("error"));
+      pm.test("Result has content", () => pm.expect(res.result.content).to.be.an("array"));
+      const data = JSON.parse(res.result.content[0].text);
+      pm.test("Property has uuid", () => pm.expect(data).to.have.property("uuid"));
+      pm.test("Property has name", () => pm.expect(data).to.have.property("name"));
+      pm.test("Property has address", () => pm.expect(data).to.have.property("address"));
+      pm.test("Property has room_types", () => pm.expect(data).to.have.property("room_types"));

@@ -1,0 +1,33 @@
+$kind: http-request
+name: 'tools/list'
+order: 3000
+method: POST
+url: '{{base_url}}/api/mcp'
+headers:
+  - key: Content-Type
+    value: application/json
+  - key: Accept
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/list"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const res = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("JSON-RPC 2.0", () => pm.expect(res.jsonrpc).to.eql("2.0"));
+      pm.test("No error", () => pm.expect(res).to.not.have.property("error"));
+      pm.test("Returns 6 tools", () => pm.expect(res.result.tools).to.have.lengthOf(6));
+      const names = res.result.tools.map(t => t.name);
+      pm.test("All expected tools present", () => {
+        ["properties_list","properties_get","properties_create",
+         "properties_update","properties_delete","properties_stats"]
+          .forEach(name => pm.expect(names).to.include(name));
+      });
