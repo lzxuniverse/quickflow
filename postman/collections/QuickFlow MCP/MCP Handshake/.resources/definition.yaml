@@ -1,0 +1,4 @@
+$kind: collection
+name: MCP Handshake
+description: 'Lifecycle requests: initialize, ping, and list tools.'
+order: 1000

@@ -1,0 +1,40 @@
+$kind: http-request
+name: initialize
+order: 1000
+method: POST
+url: '{{base_url}}/api/mcp'
+headers:
+  - key: Content-Type
+    value: application/json
+  - key: Accept
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {},
+        "clientInfo": {
+          "name": "Postman",
+          "version": "1.0"
+        }
+      }
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const res = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("JSON-RPC 2.0", () => pm.expect(res.jsonrpc).to.eql("2.0"));
+      pm.test("No error", () => pm.expect(res).to.not.have.property("error"));
+      pm.test("Server name is quickflow-property-mcp", () =>
+        pm.expect(res.result.serverInfo.name).to.eql("quickflow-property-mcp")
+      );
+      pm.test("Protocol version matches", () =>
+        pm.expect(res.result.protocolVersion).to.eql("2024-11-05")
+      );

@@ -18,6 +18,8 @@ class McpToolCall extends Model
 
     protected $keyType = 'string';
 
+    public const UPDATED_AT = null;
+
     protected $fillable = [
         'mcp_server_id',
         'tool_name',

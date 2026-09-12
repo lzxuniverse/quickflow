@@ -18,6 +18,8 @@ class McpServer extends Model
 
     protected $keyType = 'string';
 
+    public $timestamps = false;
+
     protected $fillable = [
         'tenant_id',
         'server_name',

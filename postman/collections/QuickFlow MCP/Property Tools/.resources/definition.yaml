@@ -1,0 +1,4 @@
+$kind: collection
+name: Property Tools
+description: 'Full CRUD + stats for properties via MCP tools/call.'
+order: 2000

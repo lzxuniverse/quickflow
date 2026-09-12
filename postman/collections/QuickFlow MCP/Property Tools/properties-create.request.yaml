@@ -1,0 +1,57 @@
+$kind: http-request
+name: 'properties_create'
+order: 3000
+method: POST
+url: '{{base_url}}/api/mcp'
+headers:
+  - key: Content-Type
+    value: application/json
+  - key: Accept
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "jsonrpc": "2.0",
+      "id": 12,
+      "method": "tools/call",
+      "params": {
+        "name": "properties_create",
+        "arguments": {
+          "tenant_id": "{{tenant_id}}",
+          "name": "Grand Hotel Saigon",
+          "currency": "VND",
+          "timezone": "Asia/Ho_Chi_Minh",
+          "address_street": "1 Lam Son Square",
+          "address_city": "Ho Chi Minh City",
+          "address_state": "Ho Chi Minh",
+          "address_country": "Vietnam",
+          "address_postal_code": "700000",
+          "lat": 10.7769,
+          "lng": 106.7009,
+          "contact_phone": "+84 28 3829 2860",
+          "contact_email": "info@grandhotelsaigon.com",
+          "status": "active"
+        }
+      }
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const res = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("JSON-RPC 2.0", () => pm.expect(res.jsonrpc).to.eql("2.0"));
+      pm.test("No error", () => pm.expect(res).to.not.have.property("error"));
+      pm.test("Result has content", () => pm.expect(res.result.content).to.be.an("array"));
+      const data = JSON.parse(res.result.content[0].text);
+      pm.test("Created property has uuid", () => pm.expect(data).to.have.property("uuid"));
+      pm.test("Created property has correct name", () =>
+        pm.expect(data.name).to.eql("Grand Hotel Saigon")
+      );
+      pm.test("Status is active", () => pm.expect(data.status).to.eql("active"));
+      if (data.uuid) {
+        pm.environment.set("property_id", data.uuid);
+        pm.collectionVariables.set("property_id", data.uuid);
+        console.log("Saved property_id:", data.uuid);
+      }

@@ -1,0 +1,6 @@
+$kind: collection
+name: QuickFlow MCP
+description: 'Test collection for QuickFlow MCP server (JSON-RPC 2.0). All requests hit POST {{base_url}}/api/mcp.'
+variables:
+  - key: base_url
+    value: 'http://quickflow.test'

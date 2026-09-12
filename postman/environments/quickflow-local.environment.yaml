@@ -1,0 +1,11 @@
+name: quickflow-local
+variables:
+  - key: base_url
+    value: 'http://quickflow.test'
+    description: 'Laravel Herd local URL'
+  - key: tenant_id
+    value: ''
+    description: 'Tenant UUID – fill in after seeding'
+  - key: property_id
+    value: ''
+    description: 'Property UUID – auto-set after create'

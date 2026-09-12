@@ -1,0 +1,37 @@
+$kind: http-request
+name: 'properties_delete'
+order: 5000
+method: POST
+url: '{{base_url}}/api/mcp'
+headers:
+  - key: Content-Type
+    value: application/json
+  - key: Accept
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "jsonrpc": "2.0",
+      "id": 14,
+      "method": "tools/call",
+      "params": {
+        "name": "properties_delete",
+        "arguments": {
+          "property_id": "{{property_id}}",
+          "force_delete": false
+        }
+      }
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const res = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("JSON-RPC 2.0", () => pm.expect(res.jsonrpc).to.eql("2.0"));
+      pm.test("No error", () => pm.expect(res).to.not.have.property("error"));
+      pm.test("Result has content", () => pm.expect(res.result.content).to.be.an("array"));
+      const data = JSON.parse(res.result.content[0].text);
+      pm.test("Delete/deactivate succeeded", () => pm.expect(data.success).to.be.true);
+      pm.test("Action is deactivated", () => pm.expect(data.action).to.eql("deactivated"));

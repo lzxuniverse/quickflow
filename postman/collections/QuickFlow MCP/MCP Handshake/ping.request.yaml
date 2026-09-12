@@ -1,0 +1,27 @@
+$kind: http-request
+name: ping
+order: 2000
+method: POST
+url: '{{base_url}}/api/mcp'
+headers:
+  - key: Content-Type
+    value: application/json
+  - key: Accept
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "ping"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const res = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("JSON-RPC 2.0", () => pm.expect(res.jsonrpc).to.eql("2.0"));
+      pm.test("No error", () => pm.expect(res).to.not.have.property("error"));
+      pm.test("Result is empty object", () => pm.expect(res.result).to.be.an("object"));
