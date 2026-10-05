@@ -36,12 +36,12 @@ class McpServerEngine
 
     protected function registerDefaultTools(): void
     {
+        $this->registry->register(new GetPropertyStatsTool());
         $this->registry->register(new ListPropertiesTool());
         $this->registry->register(new GetPropertyTool());
-        $this->registry->register(new CreatePropertyTool());
-        $this->registry->register(new UpdatePropertyTool());
-        $this->registry->register(new DeletePropertyTool());
-        $this->registry->register(new GetPropertyStatsTool());
+        // $this->registry->register(new CreatePropertyTool());
+        // $this->registry->register(new UpdatePropertyTool());
+        // $this->registry->register(new DeletePropertyTool());
     }
 
     /**
