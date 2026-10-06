@@ -116,6 +116,83 @@ class McpPropertyTest extends TestCase
         $this->assertArrayHasKey('total', $listData);
     }
 
+    public function test_mcp_properties_list_status_filters(): void
+    {
+        // 1. Test filtering by active status
+        $responseActive = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 5,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_list',
+                'arguments' => [
+                    'tenant_id' => $this->tenant->uuid,
+                    'status' => 'active',
+                ],
+            ],
+        ]);
+
+        $responseActive->assertStatus(200);
+        $activeData = json_decode($responseActive->json('result.content.0.text'), true);
+        foreach ($activeData['properties'] as $prop) {
+            $this->assertEquals('active', $prop['status']);
+        }
+
+        // 2. Test filtering by 'all' status
+        $responseAll = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 6,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_list',
+                'arguments' => [
+                    'tenant_id' => $this->tenant->uuid,
+                    'status' => 'all',
+                ],
+            ],
+        ]);
+
+        $responseAll->assertStatus(200);
+        $allData = json_decode($responseAll->json('result.content.0.text'), true);
+        $this->assertArrayHasKey('properties', $allData);
+
+        // 3. Test filtering by country
+        $responseCountry = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 7,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_list',
+                'arguments' => [
+                    'tenant_id' => $this->tenant->uuid,
+                    'country' => 'Portugal',
+                ],
+            ],
+        ]);
+
+        $responseCountry->assertStatus(200);
+        $countryData = json_decode($responseCountry->json('result.content.0.text'), true);
+        $this->assertArrayHasKey('properties', $countryData);
+
+        // 4. Test search matching country/city/name
+        $responseSearch = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 8,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_list',
+                'arguments' => [
+                    'tenant_id' => $this->tenant->uuid,
+                    'search' => 'Portugal',
+                ],
+            ],
+        ]);
+
+        $responseSearch->assertStatus(200);
+        $searchData = json_decode($responseSearch->json('result.content.0.text'), true);
+        $this->assertArrayHasKey('properties', $searchData);
+    }
+
     public function test_mcp_properties_crud_flow_and_call_logging(): void
     {
         // 1. Create property via MCP

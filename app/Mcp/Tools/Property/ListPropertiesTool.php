@@ -14,7 +14,10 @@ class ListPropertiesTool implements ToolInterface
 
     public function getDescription(): string
     {
-        return 'Search and list properties/hotels with optional filters for name, city, country, status, and tenant.';
+        return 'Search and list properties/hotels with optional filters for name, city, country, status, and tenant. '
+            . 'IMPORTANT INSTRUCTION: If the user asks for a list of properties without explicitly specifying whether they want active, inactive, or all properties, '
+            . 'do NOT call this tool immediately. Always ask the user first to clarify whether they want "active", "inactive", or "all" properties. '
+            . 'Only invoke this tool once the user provides their choice.';
     }
 
     public function getInputSchema(): array
@@ -26,10 +29,18 @@ class ListPropertiesTool implements ToolInterface
                     'type' => 'string',
                     'description' => 'Optional search query matching name, city, or country.',
                 ],
+                'city' => [
+                    'type' => 'string',
+                    'description' => 'Optional filter properties by city name.',
+                ],
+                'country' => [
+                    'type' => 'string',
+                    'description' => 'Optional filter properties by country name.',
+                ],
                 'status' => [
                     'type' => 'string',
-                    'enum' => ['active', 'inactive'],
-                    'description' => 'Filter by property status.',
+                    'enum' => ['active', 'inactive', 'all'],
+                    'description' => 'Filter by property status: "active", "inactive", or "all". Clarify with user if unspecified.',
                 ],
                 'tenant_id' => [
                     'type' => 'string',
@@ -59,16 +70,24 @@ class ListPropertiesTool implements ToolInterface
             $query->where('tenant_id', $arguments['tenant_id']);
         }
 
-        if (!empty($arguments['status'])) {
+        if (!empty($arguments['status']) && $arguments['status'] !== 'all') {
             $query->where('status', $arguments['status']);
+        }
+
+        if (!empty($arguments['city'])) {
+            $query->where('address_city', 'like', "%{$arguments['city']}%");
+        }
+
+        if (!empty($arguments['country'])) {
+            $query->where('address_country', 'like', "%{$arguments['country']}%");
         }
 
         if (!empty($arguments['search'])) {
             $search = $arguments['search'];
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('address_city', 'like', "%{$search}%")
-                  ->orWhere('address_country', 'like', "%{$search}%");
+                    ->orWhere('address_city', 'like', "%{$search}%")
+                    ->orWhere('address_country', 'like', "%{$search}%");
             });
         }
 
