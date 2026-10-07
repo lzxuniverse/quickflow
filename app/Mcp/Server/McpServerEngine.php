@@ -41,7 +41,7 @@ class McpServerEngine
         $this->registry->register(new GetPropertyTool());
         // $this->registry->register(new CreatePropertyTool());
         // $this->registry->register(new UpdatePropertyTool());
-        // $this->registry->register(new DeletePropertyTool());
+        $this->registry->register(new DeletePropertyTool());
     }
 
     /**

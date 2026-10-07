@@ -266,6 +266,7 @@ class McpPropertyTest extends TestCase
                 'name' => 'properties_delete',
                 'arguments' => [
                     'property_id' => $propertyUuid,
+                    'confirmed' => true,
                     'force_delete' => false,
                 ],
             ],
@@ -288,6 +289,7 @@ class McpPropertyTest extends TestCase
                 'name' => 'properties_delete',
                 'arguments' => [
                     'property_id' => $propertyUuid,
+                    'confirmed' => true,
                     'force_delete' => true,
                 ],
             ],
@@ -299,5 +301,72 @@ class McpPropertyTest extends TestCase
         $callLogged = McpToolCall::where('tool_name', 'properties_create')->latest('created_at')->first();
         $this->assertNotNull($callLogged);
         $this->assertEquals('success', $callLogged->status);
+    }
+
+    public function test_mcp_properties_delete_guardrail_enforcement(): void
+    {
+        $property = Property::where('tenant_id', $this->tenant->uuid)->first() ?? Property::create([
+            'tenant_id' => $this->tenant->uuid,
+            'name' => 'Guardrail Test Hotel',
+            'status' => 'active',
+            'currency' => 'USD',
+            'timezone' => 'UTC',
+        ]);
+
+        // 1. Attempt delete without property_id or uuid (should fail)
+        $responseMissing = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 20,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_delete',
+                'arguments' => [],
+            ],
+        ]);
+
+        $responseMissing->assertStatus(200);
+        $responseMissing->assertJsonPath('result.isError', true);
+        $errorText = $responseMissing->json('result.content.0.text');
+        $this->assertStringContainsString('Parameter "property_id" or "uuid" is required', $errorText);
+
+        // 2. Delete with uuid parameter (as ChatGPT sends)
+        $responseUuid = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 21,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_delete',
+                'arguments' => [
+                    'uuid' => $property->uuid,
+                ],
+            ],
+        ]);
+
+        $responseUuid->assertStatus(200);
+        $responseUuid->assertJsonPath('result.isError', false);
+        $uuidData = json_decode($responseUuid->json('result.content.0.text'), true);
+        $this->assertTrue($uuidData['success']);
+        $this->assertEquals('deactivated', $uuidData['action']);
+
+        // 3. Delete with property_id parameter
+        $responseSuccess = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 22,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_delete',
+                'arguments' => [
+                    'property_id' => $property->uuid,
+                    'confirmed' => true,
+                    'force_delete' => false,
+                ],
+            ],
+        ]);
+
+        $responseSuccess->assertStatus(200);
+        $responseSuccess->assertJsonPath('result.isError', false);
+        $successData = json_decode($responseSuccess->json('result.content.0.text'), true);
+        $this->assertTrue($successData['success']);
+        $this->assertEquals('deactivated', $successData['action']);
     }
 }

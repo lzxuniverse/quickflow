@@ -8,6 +8,7 @@ use App\Mcp\Server\McpServerEngine;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 
 class McpController extends Controller
 {
@@ -46,7 +47,9 @@ class McpController extends Controller
             return response()->json($responses);
         }
 
+        Log::info('MCP INCOMING: ' . json_encode($payload, JSON_UNESCAPED_UNICODE));
         $result = $this->engine->handle($payload);
+        Log::info('MCP OUTGOING: ' . json_encode($result, JSON_UNESCAPED_UNICODE));
 
         if ($result === null) {
             return response()->noContent();

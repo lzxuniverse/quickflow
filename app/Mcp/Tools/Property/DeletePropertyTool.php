@@ -15,7 +15,20 @@ class DeletePropertyTool implements ToolInterface
 
     public function getDescription(): string
     {
-        return 'Deactivate or permanently remove a property. Default is safe soft deactivation (status=inactive). Use force_delete=true for full cascade deletion.';
+        return 'Deactivate or permanently remove a property from the system. Default is safe soft deactivation (status=inactive). 
+        Use force_delete=true for full cascade deletion. '
+            . 'CRITICAL SAFETY GUARDRAILS: '
+            . '1. AMBIGUOUS TARGET: If the user provides a vague name or location matching multiple properties 
+            (e.g. multiple hotels in the same city or sharing a keyword), you must first use properties_list to find the candidates, 
+            then present them and ask the user to clarify which exact property they want to delete. NEVER guess or delete arbitrarily. '
+            . '2. DESTRUCTIVE ACTION WARNING & CONFIRMATION: Even after identifying the exact property, 
+            do NOT call this tool immediately upon the initial request. 
+            You MUST first present the property name and UUID, warn the user that this action will deactivate/remove the property, 
+            and ask for explicit confirmation (e.g., "Are you sure you want to delete [Property Name] (ID: [UUID])? Please reply to confirm."). '
+            . '3. STRICT CONFIRMATION ENFORCEMENT: 
+            Only invoke this tool with confirmed=true AFTER the user explicitly confirms the deletion in their subsequent reply. 
+            If the user cancels or says no, do NOT call this tool. 
+            Even if the user requests an immediate or emergency deletion without asking, safety policy requires you to still ask for confirmation first.';
     }
 
     public function getInputSchema(): array
@@ -25,7 +38,15 @@ class DeletePropertyTool implements ToolInterface
             'properties' => [
                 'property_id' => [
                     'type' => 'string',
+                    'description' => 'The UUID of the property to delete or deactivate (can also be passed as "uuid").',
+                ],
+                'uuid' => [
+                    'type' => 'string',
                     'description' => 'The UUID of the property to delete or deactivate.',
+                ],
+                'confirmed' => [
+                    'type' => 'boolean',
+                    'description' => 'Optional confirmation flag indicating user has confirmed.',
                 ],
                 'force_delete' => [
                     'type' => 'boolean',
@@ -33,15 +54,15 @@ class DeletePropertyTool implements ToolInterface
                     'description' => 'If true, permanently cascades deletion of property and related records. If false, simply marks status as inactive.',
                 ],
             ],
-            'required' => ['property_id'],
+            'required' => [],
         ];
     }
 
     public function execute(array $arguments): array
     {
-        $propertyId = $arguments['property_id'] ?? null;
+        $propertyId = $arguments['property_id'] ?? $arguments['uuid'] ?? null;
         if (!$propertyId) {
-            throw new \InvalidArgumentException('Parameter "property_id" is required.');
+            throw new \InvalidArgumentException('Parameter "property_id" or "uuid" is required.');
         }
 
         $property = Property::where('uuid', $propertyId)->first();
