@@ -116,6 +116,83 @@ class McpPropertyTest extends TestCase
         $this->assertArrayHasKey('total', $listData);
     }
 
+    public function test_mcp_properties_list_status_filters(): void
+    {
+        // 1. Test filtering by active status
+        $responseActive = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 5,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_list',
+                'arguments' => [
+                    'tenant_id' => $this->tenant->uuid,
+                    'status' => 'active',
+                ],
+            ],
+        ]);
+
+        $responseActive->assertStatus(200);
+        $activeData = json_decode($responseActive->json('result.content.0.text'), true);
+        foreach ($activeData['properties'] as $prop) {
+            $this->assertEquals('active', $prop['status']);
+        }
+
+        // 2. Test filtering by 'all' status
+        $responseAll = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 6,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_list',
+                'arguments' => [
+                    'tenant_id' => $this->tenant->uuid,
+                    'status' => 'all',
+                ],
+            ],
+        ]);
+
+        $responseAll->assertStatus(200);
+        $allData = json_decode($responseAll->json('result.content.0.text'), true);
+        $this->assertArrayHasKey('properties', $allData);
+
+        // 3. Test filtering by country
+        $responseCountry = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 7,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_list',
+                'arguments' => [
+                    'tenant_id' => $this->tenant->uuid,
+                    'country' => 'Portugal',
+                ],
+            ],
+        ]);
+
+        $responseCountry->assertStatus(200);
+        $countryData = json_decode($responseCountry->json('result.content.0.text'), true);
+        $this->assertArrayHasKey('properties', $countryData);
+
+        // 4. Test search matching country/city/name
+        $responseSearch = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 8,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_list',
+                'arguments' => [
+                    'tenant_id' => $this->tenant->uuid,
+                    'search' => 'Portugal',
+                ],
+            ],
+        ]);
+
+        $responseSearch->assertStatus(200);
+        $searchData = json_decode($responseSearch->json('result.content.0.text'), true);
+        $this->assertArrayHasKey('properties', $searchData);
+    }
+
     public function test_mcp_properties_crud_flow_and_call_logging(): void
     {
         // 1. Create property via MCP
@@ -189,6 +266,7 @@ class McpPropertyTest extends TestCase
                 'name' => 'properties_delete',
                 'arguments' => [
                     'property_id' => $propertyUuid,
+                    'confirmed' => true,
                     'force_delete' => false,
                 ],
             ],
@@ -211,6 +289,7 @@ class McpPropertyTest extends TestCase
                 'name' => 'properties_delete',
                 'arguments' => [
                     'property_id' => $propertyUuid,
+                    'confirmed' => true,
                     'force_delete' => true,
                 ],
             ],
@@ -222,5 +301,72 @@ class McpPropertyTest extends TestCase
         $callLogged = McpToolCall::where('tool_name', 'properties_create')->latest('created_at')->first();
         $this->assertNotNull($callLogged);
         $this->assertEquals('success', $callLogged->status);
+    }
+
+    public function test_mcp_properties_delete_guardrail_enforcement(): void
+    {
+        $property = Property::where('tenant_id', $this->tenant->uuid)->first() ?? Property::create([
+            'tenant_id' => $this->tenant->uuid,
+            'name' => 'Guardrail Test Hotel',
+            'status' => 'active',
+            'currency' => 'USD',
+            'timezone' => 'UTC',
+        ]);
+
+        // 1. Attempt delete without property_id or uuid (should fail)
+        $responseMissing = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 20,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_delete',
+                'arguments' => [],
+            ],
+        ]);
+
+        $responseMissing->assertStatus(200);
+        $responseMissing->assertJsonPath('result.isError', true);
+        $errorText = $responseMissing->json('result.content.0.text');
+        $this->assertStringContainsString('Parameter "property_id" or "uuid" is required', $errorText);
+
+        // 2. Delete with uuid parameter (as ChatGPT sends)
+        $responseUuid = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 21,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_delete',
+                'arguments' => [
+                    'uuid' => $property->uuid,
+                ],
+            ],
+        ]);
+
+        $responseUuid->assertStatus(200);
+        $responseUuid->assertJsonPath('result.isError', false);
+        $uuidData = json_decode($responseUuid->json('result.content.0.text'), true);
+        $this->assertTrue($uuidData['success']);
+        $this->assertEquals('deactivated', $uuidData['action']);
+
+        // 3. Delete with property_id parameter
+        $responseSuccess = $this->postJson('/api/mcp', [
+            'jsonrpc' => '2.0',
+            'id' => 22,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'properties_delete',
+                'arguments' => [
+                    'property_id' => $property->uuid,
+                    'confirmed' => true,
+                    'force_delete' => false,
+                ],
+            ],
+        ]);
+
+        $responseSuccess->assertStatus(200);
+        $responseSuccess->assertJsonPath('result.isError', false);
+        $successData = json_decode($responseSuccess->json('result.content.0.text'), true);
+        $this->assertTrue($successData['success']);
+        $this->assertEquals('deactivated', $successData['action']);
     }
 }

@@ -8,6 +8,7 @@ use App\Mcp\Server\McpServerEngine;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 
 class McpController extends Controller
 {
@@ -19,10 +20,37 @@ class McpController extends Controller
     }
 
     /**
+     * Handle incoming HTTP JSON-RPC MCP requests for a specific scoped tenant.
+     */
+    public function handleTenant(Request $request, string $tenant): JsonResponse|Response
+    {
+        return $this->handle($request, $tenant);
+    }
+
+    /**
      * Handle incoming HTTP JSON-RPC MCP requests.
      */
-    public function handle(Request $request): JsonResponse|Response
+    public function handle(Request $request, ?string $tenant = null): JsonResponse|Response
     {
+        @set_time_limit(180);
+
+        \App\Mcp\Gate\McpTenantContext::resolveFromRequest($request, $tenant);
+
+        // Handle GET, DELETE, HEAD health-checks or platform de-registration pings
+        if (!$request->isMethod('POST')) {
+            $tenantMeta = \App\Mcp\Gate\McpTenantContext::getActiveTenant();
+            return response()->json([
+                'status' => 'ok',
+                'service' => 'QuickFlow MCP Server',
+                'protocolVersion' => '2024-11-05',
+                'tenant' => $tenantMeta ? [
+                    'name' => $tenantMeta['name'],
+                    'slug' => $tenantMeta['slug'],
+                    'region' => $tenantMeta['primary_market'],
+                ] : null,
+            ]);
+        }
+
         $payload = $request->json()->all();
 
         if (empty($payload) || !is_array($payload)) {
@@ -46,7 +74,9 @@ class McpController extends Controller
             return response()->json($responses);
         }
 
+        Log::info('MCP INCOMING: ' . json_encode($payload, JSON_UNESCAPED_UNICODE));
         $result = $this->engine->handle($payload);
+        Log::info('MCP OUTGOING: ' . json_encode($result, JSON_UNESCAPED_UNICODE));
 
         if ($result === null) {
             return response()->noContent();

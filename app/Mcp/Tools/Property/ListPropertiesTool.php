@@ -14,7 +14,7 @@ class ListPropertiesTool implements ToolInterface
 
     public function getDescription(): string
     {
-        return 'Search and list properties/hotels with optional filters for name, city, country, status, and tenant.';
+        return 'Search and list properties/hotels with optional filters for name, city, country, status (active, inactive, all), and tenant. Defaults to active properties if status is not specified.';
     }
 
     public function getInputSchema(): array
@@ -26,10 +26,19 @@ class ListPropertiesTool implements ToolInterface
                     'type' => 'string',
                     'description' => 'Optional search query matching name, city, or country.',
                 ],
+                'city' => [
+                    'type' => 'string',
+                    'description' => 'Optional filter properties by city name.',
+                ],
+                'country' => [
+                    'type' => 'string',
+                    'description' => 'Optional filter properties by country name.',
+                ],
                 'status' => [
                     'type' => 'string',
-                    'enum' => ['active', 'inactive'],
-                    'description' => 'Filter by property status.',
+                    'enum' => ['active', 'inactive', 'all'],
+                    'default' => 'active',
+                    'description' => 'Filter by property status: "active", "inactive", or "all". Default is "active".',
                 ],
                 'tenant_id' => [
                     'type' => 'string',
@@ -42,9 +51,9 @@ class ListPropertiesTool implements ToolInterface
                 ],
                 'per_page' => [
                     'type' => 'integer',
-                    'default' => 10,
-                    'maximum' => 50,
-                    'description' => 'Number of properties per page (max 50).',
+                    'default' => 50,
+                    'maximum' => 250,
+                    'description' => 'Number of properties per page (max 250).',
                 ],
             ],
             'required' => [],
@@ -55,25 +64,37 @@ class ListPropertiesTool implements ToolInterface
     {
         $query = Property::query();
 
-        if (!empty($arguments['tenant_id'])) {
+        // Strict Tenant Boundary Scoping (Prevent BOLA / Cross-Tenant Leakage)
+        if (\App\Mcp\Gate\McpTenantContext::hasActiveTenant()) {
+            $query->where('tenant_id', \App\Mcp\Gate\McpTenantContext::getActiveTenantId());
+        } elseif (!empty($arguments['tenant_id'])) {
             $query->where('tenant_id', $arguments['tenant_id']);
         }
 
-        if (!empty($arguments['status'])) {
-            $query->where('status', $arguments['status']);
+        $status = $arguments['status'] ?? 'active';
+        if ($status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        if (!empty($arguments['city'])) {
+            $query->where('address_city', 'like', "%{$arguments['city']}%");
+        }
+
+        if (!empty($arguments['country'])) {
+            $query->where('address_country', 'like', "%{$arguments['country']}%");
         }
 
         if (!empty($arguments['search'])) {
             $search = $arguments['search'];
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('address_city', 'like', "%{$search}%")
-                  ->orWhere('address_country', 'like', "%{$search}%");
+                    ->orWhere('address_city', 'like', "%{$search}%")
+                    ->orWhere('address_country', 'like', "%{$search}%");
             });
         }
 
         $page = max(1, (int) ($arguments['page'] ?? 1));
-        $perPage = min(50, max(1, (int) ($arguments['per_page'] ?? 10)));
+        $perPage = min(250, max(1, (int) ($arguments['per_page'] ?? 50)));
 
         $paginator = $query->orderBy('name')->paginate($perPage, ['*'], 'page', $page);
 

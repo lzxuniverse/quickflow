@@ -408,7 +408,18 @@
     <header>
         <div class="header-title-area">
             <h1>Properties Directory</h1>
-            <p>Showing {{ $properties->firstItem() ?? 0 }} - {{ $properties->lastItem() ?? 0 }} of {{ $properties->total() }} premium properties</p>
+            <p style="margin-bottom: 0.75rem;">Showing {{ $properties->firstItem() ?? 0 }} - {{ $properties->lastItem() ?? 0 }} of {{ $properties->total() }} premium properties</p>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <a href="{{ route('properties.stats') }}" class="btn" style="display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; padding: 0.4rem 0.85rem; background: rgba(34, 211, 238, 0.1); border: 1px solid rgba(34, 211, 238, 0.3); color: #22d3ee; border-radius: 8px; text-decoration: none;">
+                    📊 All Stats (196) →
+                </a>
+                <a href="{{ route('properties.stats', ['tenant' => 'alpha']) }}" class="btn" style="display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; padding: 0.4rem 0.85rem; background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.35); color: #a5b4fc; border-radius: 8px; text-decoration: none;">
+                    🇫🇷 Alpha Stats (47) →
+                </a>
+                <a href="{{ route('properties.stats', ['tenant' => 'beta']) }}" class="btn" style="display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; padding: 0.4rem 0.85rem; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); color: #34d399; border-radius: 8px; text-decoration: none;">
+                    🇩🇪 Beta Stats (39) →
+                </a>
+            </div>
         </div>
 
         <div class="search-container">

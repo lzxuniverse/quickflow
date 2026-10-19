@@ -36,7 +36,10 @@ class GetPropertyStatsTool implements ToolInterface
     {
         $query = Property::query();
 
-        if (!empty($arguments['tenant_id'])) {
+        // Strict Tenant Boundary Scoping (Prevent BOLA / Cross-Tenant Leakage)
+        if (\App\Mcp\Gate\McpTenantContext::hasActiveTenant()) {
+            $query->where('tenant_id', \App\Mcp\Gate\McpTenantContext::getActiveTenantId());
+        } elseif (!empty($arguments['tenant_id'])) {
             $query->where('tenant_id', $arguments['tenant_id']);
         }
 

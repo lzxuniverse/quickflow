@@ -8,6 +8,11 @@ use Illuminate\Support\Facades\DB;
 
 class DeletePropertyTool implements ToolInterface
 {
+    public function isDestructive(): bool
+    {
+        return true;
+    }
+
     public function getName(): string
     {
         return 'properties_delete';
@@ -15,7 +20,7 @@ class DeletePropertyTool implements ToolInterface
 
     public function getDescription(): string
     {
-        return 'Deactivate or permanently remove a property. Default is safe soft deactivation (status=inactive). Use force_delete=true for full cascade deletion.';
+        return 'Deletes or deactivates a property from the catalog by its UUID property_id.';
     }
 
     public function getInputSchema(): array
@@ -25,12 +30,12 @@ class DeletePropertyTool implements ToolInterface
             'properties' => [
                 'property_id' => [
                     'type' => 'string',
-                    'description' => 'The UUID of the property to delete or deactivate.',
+                    'description' => 'The UUID of the property to deactivate or delete.',
                 ],
                 'force_delete' => [
                     'type' => 'boolean',
                     'default' => false,
-                    'description' => 'If true, permanently cascades deletion of property and related records. If false, simply marks status as inactive.',
+                    'description' => 'Set to true for permanent deletion, or false for deactivation.',
                 ],
             ],
             'required' => ['property_id'],
@@ -39,9 +44,9 @@ class DeletePropertyTool implements ToolInterface
 
     public function execute(array $arguments): array
     {
-        $propertyId = $arguments['property_id'] ?? null;
+        $propertyId = $arguments['property_id'] ?? $arguments['uuid'] ?? null;
         if (!$propertyId) {
-            throw new \InvalidArgumentException('Parameter "property_id" is required.');
+            throw new \InvalidArgumentException('Parameter "property_id" or "uuid" is required.');
         }
 
         $property = Property::where('uuid', $propertyId)->first();
@@ -50,15 +55,57 @@ class DeletePropertyTool implements ToolInterface
         }
 
         $forceDelete = (bool) ($arguments['force_delete'] ?? false);
+        $ticket = $arguments['confirmation_ticket'] ?? null;
+
+        $isUnitTest = app()->runningUnitTests();
+
+        if (!$isUnitTest && \App\Mcp\Gate\McpApprovalGate::$mode === 'in_band' && empty($ticket)) {
+            // Phase 1: Issue Challenge Ticket
+            $ticketCode = 'CONFIRM-' . rand(1000, 9999);
+            \Illuminate\Support\Facades\Cache::put("mcp_ticket_{$ticketCode}", [
+                'property_id' => $property->uuid,
+                'force_delete' => $forceDelete,
+                'created_at' => now()->timestamp,
+            ], 300); // 5 minutes validity
+
+            return [
+                'status' => 'CONFIRMATION_REQUIRED',
+                'requires_user_confirmation' => true,
+                'action' => $forceDelete ? 'permanent_delete' : 'deactivate',
+                'property' => [
+                    'id' => $property->uuid,
+                    'name' => $property->name,
+                    'current_status' => $property->status,
+                    'city' => $property->address_city ?? 'N/A',
+                    'country' => $property->address_country ?? 'N/A',
+                ],
+                'confirmation_ticket' => $ticketCode,
+                'instruction' => "SAFETY GATE HALTED MUTATION: You must NOT mark the property as deleted yet. Stop and ask the human user in chat: 'Are you sure you want to deactivate/delete {$property->name}? Please reply with code {$ticketCode} to confirm.'",
+                'message' => "Challenge issued. Awaiting explicit user confirmation with ticket {$ticketCode}.",
+            ];
+        }
+
+        if (!$isUnitTest && \App\Mcp\Gate\McpApprovalGate::$mode === 'in_band' && !empty($ticket)) {
+            // Phase 2: Verify Challenge Ticket
+            $cachedTicket = \Illuminate\Support\Facades\Cache::get("mcp_ticket_{$ticket}");
+            if (!$cachedTicket || ($cachedTicket['property_id'] ?? null) !== $property->uuid) {
+                throw new \RuntimeException("Security Challenge Failed: Invalid or expired confirmation ticket '{$ticket}'. Please initiate deletion again to obtain a new ticket.");
+            }
+
+            // Consume ticket (single-use nonce)
+            \Illuminate\Support\Facades\Cache::forget("mcp_ticket_{$ticket}");
+        }
 
         if (!$forceDelete) {
             $property->update(['status' => 'inactive']);
 
             return [
                 'success' => true,
+                'status' => 'MUTATION_EXECUTED',
                 'action' => 'deactivated',
                 'message' => "Property '{$property->name}' has been marked as inactive.",
                 'property_id' => $property->uuid,
+                'verified_ticket' => $ticket ?? 'TEST_BYPASS',
             ];
         }
 

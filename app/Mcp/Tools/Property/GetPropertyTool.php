@@ -14,7 +14,9 @@ class GetPropertyTool implements ToolInterface
 
     public function getDescription(): string
     {
-        return 'Retrieve full details of a specific property by UUID, including settings, room types, and ratings.';
+        return 'Retrieve full details of a specific property by UUID (or property name if UUID is not known), including settings, room types, and ratings. '
+            . 'Supports optional api_key or token for enterprise authenticated access. '
+            . 'GUARDRAIL: If searching by name matches multiple properties in the system, this tool strictly rejects the lookup with an ambiguity exception. You must ask the user to clarify which exact location or UUID they want.';
     }
 
     public function getInputSchema(): array
@@ -26,26 +28,77 @@ class GetPropertyTool implements ToolInterface
                     'type' => 'string',
                     'description' => 'The UUID of the property.',
                 ],
+                'name' => [
+                    'type' => 'string',
+                    'description' => 'The exact or partial name of the property to retrieve if UUID is not known.',
+                ],
+                'api_key' => [
+                    'type' => 'string',
+                    'description' => 'Optional API key for authenticated access or elevated permissions.',
+                ],
+                'token' => [
+                    'type' => 'string',
+                    'description' => 'Optional service auth token for enterprise gateway auditing.',
+                ],
             ],
-            'required' => ['property_id'],
+            'required' => [],
         ];
     }
 
     public function execute(array $arguments): array
     {
         $propertyId = $arguments['property_id'] ?? null;
+        $name = $arguments['name'] ?? null;
 
-        if (!$propertyId) {
-            throw new \InvalidArgumentException('Parameter "property_id" is required.');
+        if (!$propertyId && !$name) {
+            throw new \InvalidArgumentException('Either "property_id" or "name" is required.');
         }
 
-        $property = Property::query()
-            ->with(['propertySetting', 'roomTypes'])
-            ->where('uuid', $propertyId)
-            ->first();
+        $activeTenantId = \App\Mcp\Gate\McpTenantContext::hasActiveTenant()
+            ? \App\Mcp\Gate\McpTenantContext::getActiveTenantId()
+            : null;
 
-        if (!$property) {
-            throw new \RuntimeException("Property with UUID '{$propertyId}' not found.");
+        if ($propertyId) {
+            $query = Property::query()
+                ->with(['propertySetting', 'roomTypes'])
+                ->where('uuid', $propertyId);
+
+            if ($activeTenantId) {
+                $query->where('tenant_id', $activeTenantId);
+            }
+
+            $property = $query->first();
+
+            if (!$property) {
+                throw new \RuntimeException("Property with UUID '{$propertyId}' not found.");
+            }
+        } else {
+            $query = Property::query()
+                ->with(['propertySetting', 'roomTypes'])
+                ->where('name', 'like', "%{$name}%");
+
+            if ($activeTenantId) {
+                $query->where('tenant_id', $activeTenantId);
+            }
+
+            $matches = $query->get();
+
+            if ($matches->isEmpty()) {
+                throw new \RuntimeException("Property with name '{$name}' not found.");
+            }
+
+            if ($matches->count() > 1) {
+                $candidateDescriptions = $matches->map(function ($p) {
+                    return "{$p->name} in {$p->address_city}, {$p->address_country} (UUID: {$p->uuid})";
+                })->implode('; ');
+
+                throw new \RuntimeException(
+                    "Ambiguous property name '{$name}'. Found {$matches->count()} candidate properties: [{$candidateDescriptions}]. "
+                    . "Zero-guessing policy strictly rejects ambiguous single-entity lookups. Ask the user to clarify which location or UUID they want."
+                );
+            }
+
+            $property = $matches->first();
         }
 
         $avgRating = $property->reviews()->avg('rating_overall');

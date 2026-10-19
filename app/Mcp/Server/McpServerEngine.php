@@ -36,12 +36,12 @@ class McpServerEngine
 
     protected function registerDefaultTools(): void
     {
+        $this->registry->register(new GetPropertyStatsTool());
         $this->registry->register(new ListPropertiesTool());
         $this->registry->register(new GetPropertyTool());
         $this->registry->register(new CreatePropertyTool());
         $this->registry->register(new UpdatePropertyTool());
         $this->registry->register(new DeletePropertyTool());
-        $this->registry->register(new GetPropertyStatsTool());
     }
 
     /**
@@ -108,10 +108,202 @@ class McpServerEngine
             return JsonRpcResponse::error($id, JsonRpcResponse::METHOD_NOT_FOUND, "Tool '{$toolName}' not found.");
         }
 
-        try {
-            $result = $tool->execute($arguments);
+        $startTime = microtime(true);
+        $hasAcquiredLock = false;
+        $targetResourceId = null;
+        $resourceLock = null;
 
-            $this->logToolCall($toolName, $arguments, $result, 'success');
+        try {
+            // -2. Enterprise Multi-Tenant Ingress Defense: Tenant Capability Guard (Data Boundary & Anti-BOLA)
+            if (\App\Mcp\Gate\McpTenantContext::isEnabled()) {
+                $tenantValidation = \App\Mcp\Gate\McpTenantContext::validate();
+                if (!$tenantValidation['valid']) {
+                    $durationMs = round((microtime(true) - $startTime) * 1000, 2);
+                    $errorMsg = $tenantValidation['message'];
+
+                    $errorPayload = [
+                        'error' => $errorMsg,
+                        'guard' => 'TENANT_CAPABILITY_INGRESS',
+                        'tool' => $toolName,
+                        '_meta' => [
+                            'duration_ms' => $durationMs,
+                            'status' => 'UNAUTHORIZED',
+                            'provided_tenant' => $tenantValidation['provided_tenant'] ?? 'none',
+                        ],
+                    ];
+
+                    $this->logToolCall($toolName, $arguments, $errorPayload, 'error', $durationMs);
+
+                    return JsonRpcResponse::success($id, [
+                        'content' => [
+                            [
+                                'type' => 'text',
+                                'text' => $errorMsg,
+                            ],
+                        ],
+                        'isError' => true,
+                    ]);
+                }
+            }
+
+            // -1. Enterprise Infrastructure Defense: Token Bucket Rate Limiter (Anti-DDoS / Anti-Loop)
+            if (\App\Mcp\Gate\McpRateLimiter::isEnabled()) {
+                // In a public tunnel (ngrok/cloudflare), cloud AI proxies (ChatGPT) rotate egress IPs.
+                // We bind the Token Bucket to the public tunnel ingress to defend local server resources.
+                $clientIdentifier = 'mcp_tunnel_ingress';
+                $rateResult = \App\Mcp\Gate\McpRateLimiter::check($clientIdentifier);
+                if (!$rateResult['allowed']) {
+                    $durationMs = round((microtime(true) - $startTime) * 1000, 2);
+                    $retryAfter = $rateResult['retry_after'];
+                    $errorMsg = \App\Mcp\Gate\McpRateLimiter::getRejectionMessage($retryAfter);
+
+                    $errorPayload = [
+                        'error' => $errorMsg,
+                        'guard' => 'TOKEN_BUCKET_RATE_LIMITER',
+                        'tool' => $toolName,
+                        '_meta' => [
+                            'duration_ms' => $durationMs,
+                            'policy' => 'TOKEN_BUCKET',
+                            'retry_after_seconds' => $retryAfter,
+                            'capacity' => $rateResult['capacity'],
+                            'remaining' => 0,
+                        ],
+                    ];
+
+                    $this->logToolCall($toolName, $arguments, $errorPayload, 'error', $durationMs);
+
+                    return JsonRpcResponse::success($id, [
+                        'content' => [
+                            [
+                                'type' => 'text',
+                                'text' => $errorMsg,
+                            ],
+                        ],
+                        'isError' => true,
+                    ]);
+                }
+            }
+
+            // 0. Enterprise Database Defense: Read-Only Ingress Guard (Least Privilege)
+            if (\App\Mcp\Gate\McpReadOnlyGuard::isEnabled() && \App\Mcp\Gate\McpReadOnlyGuard::isMutation($toolName, $tool)) {
+                $durationMs = round((microtime(true) - $startTime) * 1000, 2);
+                $errorMsg = \App\Mcp\Gate\McpReadOnlyGuard::getRejectionMessage($toolName);
+
+                $errorPayload = [
+                    'error' => $errorMsg,
+                    'guard' => 'READ_ONLY_INGRESS',
+                    'tool' => $toolName,
+                    '_meta' => [
+                        'duration_ms' => $durationMs,
+                        'policy' => 'LEAST_PRIVILEGE',
+                    ],
+                ];
+
+                $this->logToolCall($toolName, $arguments, $errorPayload, 'error', $durationMs);
+
+                return JsonRpcResponse::success($id, [
+                    'content' => [
+                        [
+                            'type' => 'text',
+                            'text' => $errorMsg,
+                        ],
+                    ],
+                    'isError' => true,
+                ]);
+            }
+
+            // 1. Enterprise Concurrency Policy: Distributed Mutex Lock
+            $resourceLock = new \App\Mcp\Gate\McpResourceLock();
+            $targetResourceId = \App\Mcp\Gate\McpResourceLock::extractResourceId($arguments);
+
+            // 2. Enterprise Security Policy: Human-in-the-Loop Approval Gate
+            $gate = new \App\Mcp\Gate\McpApprovalGate();
+            $auth = null;
+            $isMutation = $gate->requiresApproval($toolName, $tool, $arguments);
+
+            if ($isMutation && $targetResourceId) {
+                $existingLock = $resourceLock->getLock($targetResourceId);
+                if ($existingLock) {
+                    $durationMs = round((microtime(true) - $startTime) * 1000, 2);
+                    $errorMsg = "MUTEX COLLISION BLOCKED: Resource '{$targetResourceId}' is locked by session [{$existingLock['holder']}]. Concurrent mutation aborted to prevent race condition.";
+                    $errorPayload = [
+                        'error' => $errorMsg,
+                        'collision' => true,
+                        'held_by' => $existingLock['holder'],
+                        'locked_at' => $existingLock['locked_at'],
+                    ];
+                    $this->logToolCall($toolName, $arguments, $errorPayload, 'collision_blocked', $durationMs);
+
+                    return JsonRpcResponse::success($id, [
+                        'content' => [
+                            [
+                                'type' => 'text',
+                                'text' => $errorMsg,
+                            ],
+                        ],
+                        'isError' => true,
+                    ]);
+                }
+
+                $lockHolderId = 'AGENT-' . strtoupper(\Illuminate\Support\Str::random(4));
+                $resourceLock->acquire($targetResourceId, $lockHolderId, 180);
+                $hasAcquiredLock = true;
+            }
+
+            if ($isMutation) {
+                $auth = $gate->requestAuthorization($toolName, $arguments, timeoutSeconds: 180);
+
+                if (!$auth['approved']) {
+                    if ($hasAcquiredLock && $targetResourceId) {
+                        $resourceLock->release($targetResourceId);
+                        $hasAcquiredLock = false;
+                    }
+
+                    $durationMs = round((microtime(true) - $startTime) * 1000, 2);
+                    $errorMsg = "SECURITY GATE BLOCKED: {$auth['reason']} [Ticket: {$auth['ticket']}]";
+                    $errorPayload = [
+                        'error' => $errorMsg,
+                        'gate_status' => $auth['status'],
+                        'ticket' => $auth['ticket'],
+                        'target' => $auth['target_summary'],
+                    ];
+                    $this->logToolCall($toolName, $arguments, $errorPayload, 'error', $durationMs);
+
+                    return JsonRpcResponse::success($id, [
+                        'content' => [
+                            [
+                                'type' => 'text',
+                                'text' => $errorMsg,
+                            ],
+                        ],
+                        'isError' => true,
+                    ]);
+                }
+            }
+
+            $result = $tool->execute($arguments);
+            $durationMs = round((microtime(true) - $startTime) * 1000, 2);
+
+            if (is_array($result)) {
+                if ($auth && $auth['approved']) {
+                    $result['_gate_authorization'] = [
+                        'status' => 'APPROVED_BY_HUMAN',
+                        'ticket' => $auth['ticket'],
+                        'authorization_latency_ms' => $auth['duration_ms'],
+                    ];
+                }
+
+                if (isset($rateResult) && is_array($rateResult)) {
+                    $result['_meta']['token_bucket'] = [
+                        'remaining' => $rateResult['remaining'],
+                        'capacity' => $rateResult['capacity'],
+                        'was_refilled' => $rateResult['was_refilled'],
+                        'refilled_tokens' => $rateResult['refilled_tokens'],
+                    ];
+                }
+            }
+
+            $this->logToolCall($toolName, $arguments, $result, 'success', $durationMs);
 
             return JsonRpcResponse::success($id, [
                 'content' => [
@@ -123,8 +315,9 @@ class McpServerEngine
                 'isError' => false,
             ]);
         } catch (Throwable $e) {
+            $durationMs = round((microtime(true) - $startTime) * 1000, 2);
             $errorPayload = ['error' => $e->getMessage()];
-            $this->logToolCall($toolName, $arguments, $errorPayload, 'error');
+            $this->logToolCall($toolName, $arguments, $errorPayload, 'error', $durationMs);
 
             return JsonRpcResponse::success($id, [
                 'content' => [
@@ -135,18 +328,40 @@ class McpServerEngine
                 ],
                 'isError' => true,
             ]);
+        } finally {
+            if ($hasAcquiredLock && $targetResourceId) {
+                $resourceLock->release($targetResourceId);
+            }
         }
     }
 
-    protected function logToolCall(string $toolName, array $arguments, mixed $response, string $status): void
+    protected function logToolCall(string $toolName, array $arguments, mixed $response, string $status, float $durationMs = 0.0): void
     {
         try {
             $serverId = $this->resolveMcpServerId($arguments['tenant_id'] ?? null);
             if ($serverId) {
+                $sanitizedArgs = $this->sanitizeArguments($arguments);
+
+                if (is_array($response)) {
+                    $existingMeta = $response['_meta'] ?? [];
+                    $tenantInfo = \App\Mcp\Gate\McpTenantContext::hasActiveTenant()
+                        ? [
+                            'slug' => strtoupper(\App\Mcp\Gate\McpTenantContext::getActiveTenantSlug()),
+                            'name' => \App\Mcp\Gate\McpTenantContext::getActiveTenantName(),
+                        ]
+                        : null;
+
+                    $response['_meta'] = array_merge($existingMeta, [
+                        'duration_ms' => $durationMs,
+                        'logged_at' => now()->toIso8601String(),
+                        'tenant' => $tenantInfo,
+                    ]);
+                }
+
                 McpToolCall::create([
                     'mcp_server_id' => $serverId,
                     'tool_name' => $toolName,
-                    'arguments' => $arguments,
+                    'arguments' => $sanitizedArgs,
                     'response' => json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                     'status' => $status,
                 ]);
@@ -154,6 +369,24 @@ class McpServerEngine
         } catch (Throwable $e) {
             Log::warning('Failed to log MCP tool call: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Enterprise Guardrail: Redact sensitive credentials before storing in audit log.
+     */
+    protected function sanitizeArguments(array $arguments): array
+    {
+        $sensitiveKeys = ['password', 'token', 'api_key', 'secret', 'auth', 'access_token', 'private_key'];
+
+        foreach ($arguments as $key => $value) {
+            if (is_array($value)) {
+                $arguments[$key] = $this->sanitizeArguments($value);
+            } elseif (in_array(strtolower($key), $sensitiveKeys, true)) {
+                $arguments[$key] = '********';
+            }
+        }
+
+        return $arguments;
     }
 
     protected function resolveMcpServerId(?string $tenantId = null): ?string
