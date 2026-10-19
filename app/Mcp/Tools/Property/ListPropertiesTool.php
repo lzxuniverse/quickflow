@@ -14,10 +14,7 @@ class ListPropertiesTool implements ToolInterface
 
     public function getDescription(): string
     {
-        return 'Search and list properties/hotels with optional filters for name, city, country, status, and tenant. '
-            . 'IMPORTANT INSTRUCTION: If the user asks for a list of properties without explicitly specifying whether they want active, inactive, or all properties, '
-            . 'do NOT call this tool immediately. Always ask the user first to clarify whether they want "active", "inactive", or "all" properties. '
-            . 'Only invoke this tool once the user provides their choice.';
+        return 'Search and list properties/hotels with optional filters for name, city, country, status (active, inactive, all), and tenant. Defaults to active properties if status is not specified.';
     }
 
     public function getInputSchema(): array
@@ -40,7 +37,8 @@ class ListPropertiesTool implements ToolInterface
                 'status' => [
                     'type' => 'string',
                     'enum' => ['active', 'inactive', 'all'],
-                    'description' => 'Filter by property status: "active", "inactive", or "all". Clarify with user if unspecified.',
+                    'default' => 'active',
+                    'description' => 'Filter by property status: "active", "inactive", or "all". Default is "active".',
                 ],
                 'tenant_id' => [
                     'type' => 'string',
@@ -53,9 +51,9 @@ class ListPropertiesTool implements ToolInterface
                 ],
                 'per_page' => [
                     'type' => 'integer',
-                    'default' => 10,
-                    'maximum' => 50,
-                    'description' => 'Number of properties per page (max 50).',
+                    'default' => 50,
+                    'maximum' => 250,
+                    'description' => 'Number of properties per page (max 250).',
                 ],
             ],
             'required' => [],
@@ -66,12 +64,16 @@ class ListPropertiesTool implements ToolInterface
     {
         $query = Property::query();
 
-        if (!empty($arguments['tenant_id'])) {
+        // Strict Tenant Boundary Scoping (Prevent BOLA / Cross-Tenant Leakage)
+        if (\App\Mcp\Gate\McpTenantContext::hasActiveTenant()) {
+            $query->where('tenant_id', \App\Mcp\Gate\McpTenantContext::getActiveTenantId());
+        } elseif (!empty($arguments['tenant_id'])) {
             $query->where('tenant_id', $arguments['tenant_id']);
         }
 
-        if (!empty($arguments['status']) && $arguments['status'] !== 'all') {
-            $query->where('status', $arguments['status']);
+        $status = $arguments['status'] ?? 'active';
+        if ($status !== 'all') {
+            $query->where('status', $status);
         }
 
         if (!empty($arguments['city'])) {
@@ -92,7 +94,7 @@ class ListPropertiesTool implements ToolInterface
         }
 
         $page = max(1, (int) ($arguments['page'] ?? 1));
-        $perPage = min(50, max(1, (int) ($arguments['per_page'] ?? 10)));
+        $perPage = min(250, max(1, (int) ($arguments['per_page'] ?? 50)));
 
         $paginator = $query->orderBy('name')->paginate($perPage, ['*'], 'page', $page);
 

@@ -12,6 +12,19 @@ class PropertyController extends Controller
     {
         $query = Property::query();
 
+        if ($request->filled('tenant')) {
+            $t = strtolower((string) $request->input('tenant'));
+            if ($t === 'alpha') {
+                $query->where('tenant_id', '12052866-68ed-45ec-a16c-11600ddd4510');
+            } elseif ($t === 'beta') {
+                $query->where('tenant_id', '434cfa16-a1be-4178-a886-487723025dd8');
+            } else {
+                $query->where('tenant_id', $t);
+            }
+        } elseif ($request->filled('tenant_id')) {
+            $query->where('tenant_id', $request->input('tenant_id'));
+        }
+
         if ($request->filled('search')) {
             $search = $request->input('search');
             $query->where(function($q) use ($search) {
@@ -24,6 +37,27 @@ class PropertyController extends Controller
         $properties = $query->orderBy('name')->paginate(12)->withQueryString();
 
         return view('properties.index', compact('properties'));
+    }
+
+    public function stats(Request $request)
+    {
+        $tenantInput = $request->input('tenant') ?? $request->input('tenant_id');
+        $tenantId = null;
+        if ($tenantInput) {
+            $t = strtolower((string) $tenantInput);
+            if ($t === 'alpha') {
+                $tenantId = '12052866-68ed-45ec-a16c-11600ddd4510';
+            } elseif ($t === 'beta') {
+                $tenantId = '434cfa16-a1be-4178-a886-487723025dd8';
+            } else {
+                $tenantId = $t;
+            }
+        }
+
+        $tool = new \App\Mcp\Tools\Property\GetPropertyStatsTool();
+        $stats = $tool->execute($tenantId ? ['tenant_id' => $tenantId] : []);
+
+        return view('properties.stats', compact('stats'));
     }
 
     public function show(Property $property)

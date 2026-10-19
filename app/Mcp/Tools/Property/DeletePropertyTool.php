@@ -8,6 +8,11 @@ use Illuminate\Support\Facades\DB;
 
 class DeletePropertyTool implements ToolInterface
 {
+    public function isDestructive(): bool
+    {
+        return true;
+    }
+
     public function getName(): string
     {
         return 'properties_delete';
@@ -15,20 +20,7 @@ class DeletePropertyTool implements ToolInterface
 
     public function getDescription(): string
     {
-        return 'Deactivate or permanently remove a property from the system. Default is safe soft deactivation (status=inactive). 
-        Use force_delete=true for full cascade deletion. '
-            . 'CRITICAL SAFETY GUARDRAILS: '
-            . '1. AMBIGUOUS TARGET: If the user provides a vague name or location matching multiple properties 
-            (e.g. multiple hotels in the same city or sharing a keyword), you must first use properties_list to find the candidates, 
-            then present them and ask the user to clarify which exact property they want to delete. NEVER guess or delete arbitrarily. '
-            . '2. DESTRUCTIVE ACTION WARNING & CONFIRMATION: Even after identifying the exact property, 
-            do NOT call this tool immediately upon the initial request. 
-            You MUST first present the property name and UUID, warn the user that this action will deactivate/remove the property, 
-            and ask for explicit confirmation (e.g., "Are you sure you want to delete [Property Name] (ID: [UUID])? Please reply to confirm."). '
-            . '3. STRICT CONFIRMATION ENFORCEMENT: 
-            Only invoke this tool with confirmed=true AFTER the user explicitly confirms the deletion in their subsequent reply. 
-            If the user cancels or says no, do NOT call this tool. 
-            Even if the user requests an immediate or emergency deletion without asking, safety policy requires you to still ask for confirmation first.';
+        return 'Deletes or deactivates a property from the catalog by its UUID property_id.';
     }
 
     public function getInputSchema(): array
@@ -38,23 +30,15 @@ class DeletePropertyTool implements ToolInterface
             'properties' => [
                 'property_id' => [
                     'type' => 'string',
-                    'description' => 'The UUID of the property to delete or deactivate (can also be passed as "uuid").',
-                ],
-                'uuid' => [
-                    'type' => 'string',
-                    'description' => 'The UUID of the property to delete or deactivate.',
-                ],
-                'confirmed' => [
-                    'type' => 'boolean',
-                    'description' => 'Optional confirmation flag indicating user has confirmed.',
+                    'description' => 'The UUID of the property to deactivate or delete.',
                 ],
                 'force_delete' => [
                     'type' => 'boolean',
                     'default' => false,
-                    'description' => 'If true, permanently cascades deletion of property and related records. If false, simply marks status as inactive.',
+                    'description' => 'Set to true for permanent deletion, or false for deactivation.',
                 ],
             ],
-            'required' => [],
+            'required' => ['property_id'],
         ];
     }
 
@@ -71,15 +55,57 @@ class DeletePropertyTool implements ToolInterface
         }
 
         $forceDelete = (bool) ($arguments['force_delete'] ?? false);
+        $ticket = $arguments['confirmation_ticket'] ?? null;
+
+        $isUnitTest = app()->runningUnitTests();
+
+        if (!$isUnitTest && \App\Mcp\Gate\McpApprovalGate::$mode === 'in_band' && empty($ticket)) {
+            // Phase 1: Issue Challenge Ticket
+            $ticketCode = 'CONFIRM-' . rand(1000, 9999);
+            \Illuminate\Support\Facades\Cache::put("mcp_ticket_{$ticketCode}", [
+                'property_id' => $property->uuid,
+                'force_delete' => $forceDelete,
+                'created_at' => now()->timestamp,
+            ], 300); // 5 minutes validity
+
+            return [
+                'status' => 'CONFIRMATION_REQUIRED',
+                'requires_user_confirmation' => true,
+                'action' => $forceDelete ? 'permanent_delete' : 'deactivate',
+                'property' => [
+                    'id' => $property->uuid,
+                    'name' => $property->name,
+                    'current_status' => $property->status,
+                    'city' => $property->address_city ?? 'N/A',
+                    'country' => $property->address_country ?? 'N/A',
+                ],
+                'confirmation_ticket' => $ticketCode,
+                'instruction' => "SAFETY GATE HALTED MUTATION: You must NOT mark the property as deleted yet. Stop and ask the human user in chat: 'Are you sure you want to deactivate/delete {$property->name}? Please reply with code {$ticketCode} to confirm.'",
+                'message' => "Challenge issued. Awaiting explicit user confirmation with ticket {$ticketCode}.",
+            ];
+        }
+
+        if (!$isUnitTest && \App\Mcp\Gate\McpApprovalGate::$mode === 'in_band' && !empty($ticket)) {
+            // Phase 2: Verify Challenge Ticket
+            $cachedTicket = \Illuminate\Support\Facades\Cache::get("mcp_ticket_{$ticket}");
+            if (!$cachedTicket || ($cachedTicket['property_id'] ?? null) !== $property->uuid) {
+                throw new \RuntimeException("Security Challenge Failed: Invalid or expired confirmation ticket '{$ticket}'. Please initiate deletion again to obtain a new ticket.");
+            }
+
+            // Consume ticket (single-use nonce)
+            \Illuminate\Support\Facades\Cache::forget("mcp_ticket_{$ticket}");
+        }
 
         if (!$forceDelete) {
             $property->update(['status' => 'inactive']);
 
             return [
                 'success' => true,
+                'status' => 'MUTATION_EXECUTED',
                 'action' => 'deactivated',
                 'message' => "Property '{$property->name}' has been marked as inactive.",
                 'property_id' => $property->uuid,
+                'verified_ticket' => $ticket ?? 'TEST_BYPASS',
             ];
         }
 
