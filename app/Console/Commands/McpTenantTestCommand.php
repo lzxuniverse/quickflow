@@ -13,6 +13,8 @@ class McpTenantTestCommand extends Command
 
     public function handle(McpServerEngine $engine): int
     {
+        \App\Mcp\Gate\McpRateLimiter::reset();
+
         $this->info('========================================================================');
         $this->info(' 🛡️  QUICKFLOW ENTERPRISE MULTI-TENANT CAPABILITY INGRESS TEST (V22) ');
         $this->info('========================================================================');

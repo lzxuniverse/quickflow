@@ -46,8 +46,9 @@ return [
     |
     */
     'rate_limit_enabled' => env('MCP_RATE_LIMIT_ENABLED', true),
-    'rate_limit_capacity' => (int) env('MCP_RATE_LIMIT_CAPACITY', 30), // Max burst tokens (3 tokens for 3-prompt demo)
-    'rate_limit_refill_rate' => (float) env('MCP_RATE_LIMIT_REFILL_RATE', 0.033), // 30s penalty cooldown window
+    'rate_limit_capacity' => (int) env('MCP_RATE_LIMIT_CAPACITY', 3), // Max burst tokens (3 tokens for 3-prompt demo)
+    'rate_limit_refill_rate' => (float) env('MCP_RATE_LIMIT_REFILL_RATE', 0.016),
+    'rate_limit_cooldown' => (int) env('MCP_RATE_LIMIT_COOLDOWN', 30), // Penalty cooldown window (30s)
 
     /*
     |--------------------------------------------------------------------------
