@@ -34,14 +34,16 @@ class McpTailCommand extends Command
             \App\Mcp\Gate\McpRateLimiter::reset();
         }
 
-        $initStatus = \App\Mcp\Gate\McpRateLimiter::getStatus('mcp_tunnel_ingress');
-        $initTokens = (int) floor($initStatus['tokens']);
-        $initCap = $initStatus['capacity'];
+        $alphaStatus = \App\Mcp\Gate\McpRateLimiter::getStatus('tenant_alpha');
+        $betaStatus = \App\Mcp\Gate\McpRateLimiter::getStatus('tenant_beta');
+        $alphaTokens = (int) floor($alphaStatus['tokens']);
+        $betaTokens = (int) floor($betaStatus['tokens']);
+        $cap = $alphaStatus['capacity'];
 
         $this->output->writeln('');
         $this->output->writeln('<fg=cyan;options=bold>======================================================</>');
-        $this->output->writeln('<fg=white;options=bold> QUICKFLOW MCP OBSERVABILITY STREAM </><fg=cyan;options=bold>(Live Audit)</>');
-        $this->output->writeln(" <fg=bright-white>Listening for tool calls... [Bucket: </><fg=yellow;options=bold>{$initTokens}/{$initCap} tokens</><fg=bright-white>]</>");
+        $this->output->writeln('<fg=white;options=bold> QUICKFLOW MCP OBSERVABILITY STREAM </><fg=cyan;options=bold>(Multi-Tenant Audit)</>');
+        $this->output->writeln(" <fg=bright-white>Listening for tool calls... [Alpha: </><fg=cyan;options=bold>{$alphaTokens}/{$cap}</><fg=bright-white> | Beta: </><fg=magenta;options=bold>{$betaTokens}/{$cap} tokens</><fg=bright-white>]</>");
         $this->output->writeln('<fg=cyan;options=bold>======================================================</>');
         $this->output->writeln('');
 
@@ -69,8 +71,10 @@ class McpTailCommand extends Command
         }
 
         // 2. Poll loop for live events
-        $wasExhausted = false;
-        $lastTickerSecond = -1;
+        $alphaExhausted = false;
+        $betaExhausted = false;
+        $lastAlphaTicker = -1;
+        $lastBetaTicker = -1;
 
         while (true) {
             $recentCalls = McpToolCall::orderBy('created_at', 'desc')
@@ -90,24 +94,39 @@ class McpTailCommand extends Command
                 }
             }
 
-            // 30s Cooldown Penalty Tracker for Audience Transparency
-            $status = \App\Mcp\Gate\McpRateLimiter::getStatus('mcp_tunnel_ingress');
-            if ($status['is_throttled']) {
-                $wasExhausted = true;
-                $remSec = $status['seconds_remaining'];
-
-                // Print clean milestone countdown every 5 seconds (25s, 20s, 15s, 10s, 5s)
-                if ($remSec > 0 && $remSec % 5 === 0 && $remSec !== $lastTickerSecond) {
-                    $lastTickerSecond = $remSec;
-                    $this->output->writeln("  <fg=yellow;options=bold>⏳ COOLDOWN IN PROGRESS:</> <fg=bright-yellow;options=bold>{$remSec}s remaining</> until server unlocks for next prompt...");
+            // Cooldown Penalty Tracker for Tenant Alpha
+            $aStat = \App\Mcp\Gate\McpRateLimiter::getStatus('tenant_alpha');
+            if ($aStat['is_throttled']) {
+                $alphaExhausted = true;
+                $remSec = $aStat['seconds_remaining'];
+                if ($remSec > 0 && $remSec % 5 === 0 && $remSec !== $lastAlphaTicker) {
+                    $lastAlphaTicker = $remSec;
+                    $this->output->writeln("  <fg=cyan;options=bold>⏳ [TENANT: ALPHA] COOLDOWN ACTIVE:</> <fg=bright-yellow;options=bold>{$remSec}s remaining</> until quota unlocks...");
                 }
-            } elseif ($wasExhausted) {
-                // Celebrate full unlock
-                $wasExhausted = false;
-                $lastTickerSecond = -1;
-                $cap = $status['capacity'];
+            } elseif ($alphaExhausted) {
+                $alphaExhausted = false;
+                $lastAlphaTicker = -1;
+                $c = $aStat['capacity'];
                 $this->output->writeln('');
-                $this->output->writeln("  <fg=black;bg=green;options=bold> ✨ 30s COOLDOWN COMPLETE </> <fg=bright-green;options=bold>Token Bucket restored ({$cap}/{$cap})! Ready for next prompt!</>");
+                $this->output->writeln("  <fg=black;bg=cyan;options=bold> ✨ [TENANT: ALPHA] COOLDOWN COMPLETE </> <fg=bright-green;options=bold>Tokens restored ({$c}/{$c})! Ready for next prompt!</>");
+                $this->output->writeln('');
+            }
+
+            // Cooldown Penalty Tracker for Tenant Beta
+            $bStat = \App\Mcp\Gate\McpRateLimiter::getStatus('tenant_beta');
+            if ($bStat['is_throttled']) {
+                $betaExhausted = true;
+                $remSec = $bStat['seconds_remaining'];
+                if ($remSec > 0 && $remSec % 5 === 0 && $remSec !== $lastBetaTicker) {
+                    $lastBetaTicker = $remSec;
+                    $this->output->writeln("  <fg=magenta;options=bold>⏳ [TENANT: BETA] COOLDOWN ACTIVE:</> <fg=bright-yellow;options=bold>{$remSec}s remaining</> until quota unlocks...");
+                }
+            } elseif ($betaExhausted) {
+                $betaExhausted = false;
+                $lastBetaTicker = -1;
+                $c = $bStat['capacity'];
+                $this->output->writeln('');
+                $this->output->writeln("  <fg=black;bg=magenta;options=bold> ✨ [TENANT: BETA] COOLDOWN COMPLETE </> <fg=bright-green;options=bold>Tokens restored ({$c}/{$c})! Ready for next prompt!</>");
                 $this->output->writeln('');
             }
 

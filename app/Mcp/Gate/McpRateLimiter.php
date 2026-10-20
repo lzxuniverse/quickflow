@@ -21,13 +21,19 @@ class McpRateLimiter
         return (float) config('mcp.rate_limit_refill_rate', env('MCP_RATE_LIMIT_REFILL_RATE', 0.5));
     }
 
+    public static function getCooldownSeconds(): int
+    {
+        return (int) config('mcp.rate_limit_cooldown', env('MCP_RATE_LIMIT_COOLDOWN', 30));
+    }
+
     /**
-     * Evaluate Token Bucket for a given client identifier.
+     * Evaluate Token Bucket for a given client identifier (Tenant-scoped or Tunnel-scoped).
      *
-     * @param string $identifier Client IP, Tenant UUID, or Tunnel Session
+     * @param string $identifier Client IP, Tenant Slug/UUID, or Tunnel Session
+     * @param int|null $customCapacity Override capacity per tenant tier
      * @return array [allowed => bool, remaining => int, retry_after => int, capacity => int]
      */
-    public static function check(string $identifier = 'mcp_tunnel_ingress'): array
+    public static function check(string $identifier = 'mcp_tunnel_ingress', ?int $customCapacity = null): array
     {
         if (!self::isEnabled()) {
             return [
@@ -38,8 +44,8 @@ class McpRateLimiter
             ];
         }
 
-        $capacity = self::getCapacity();
-        $cooldownSeconds = 30; // 30s penalty cooldown window
+        $capacity = $customCapacity ?? self::getCapacity();
+        $cooldownSeconds = self::getCooldownSeconds(); // Configurable penalty cooldown window (e.g. 60s/120s)
         $cacheKey = "mcp:rate_limit:bucket:" . md5($identifier);
 
         $now = microtime(true);
@@ -78,7 +84,21 @@ class McpRateLimiter
             $throttledAt = 0.0;
             $wasRefilled = true;
         } else {
-            $wasRefilled = false;
+            // Case B: Client is NOT throttled. Apply continuous token regeneration & idle restore!
+            $elapsedSinceLast = $now - $lastUpdated;
+            if ($elapsedSinceLast >= $cooldownSeconds) {
+                // If idle for >= cooldown window, automatically restore bucket to 100% capacity!
+                $tokens = (float) $capacity;
+                $wasRefilled = true;
+            } elseif ($tokens < $capacity && $elapsedSinceLast > 0) {
+                $refillRate = self::getRefillRate();
+                $added = $elapsedSinceLast * $refillRate;
+                $newTokens = min((float) $capacity, $tokens + $added);
+                $wasRefilled = ($newTokens >= (float) $capacity && $tokens < (float) $capacity);
+                $tokens = $newTokens;
+            } else {
+                $wasRefilled = false;
+            }
         }
 
         // Case C: Normal token consumption (In-quota) - Deduct EXACTLY 1.0 token
@@ -122,19 +142,22 @@ class McpRateLimiter
         ];
     }
 
-    public static function getRejectionMessage(int $retryAfter): string
+    public static function getRejectionMessage(int $retryAfter, ?string $tenantName = null): string
     {
         $capacity = self::getCapacity();
+        if ($tenantName) {
+            return "429 TOO MANY REQUESTS: Tenant quota exhausted for [{$tenantName}] ({$capacity} tokens). Cooldown penalty active: please wait {$retryAfter} seconds before sending the next prompt.";
+        }
         return "RATE LIMIT EXCEEDED: Infrastructure capacity reached ({$capacity} tokens). Cooldown penalty active: please wait {$retryAfter} seconds before sending the next prompt.";
     }
 
     /**
      * Get real-time status of Token Bucket (used by mcp:tail countdown tracking).
      */
-    public static function getStatus(string $identifier = 'mcp_tunnel_ingress'): array
+    public static function getStatus(string $identifier = 'mcp_tunnel_ingress', ?int $customCapacity = null): array
     {
-        $capacity = self::getCapacity();
-        $cooldownSeconds = 30;
+        $capacity = $customCapacity ?? self::getCapacity();
+        $cooldownSeconds = self::getCooldownSeconds();
         $cacheKey = "mcp:rate_limit:bucket:" . md5($identifier);
 
         $now = microtime(true);
@@ -152,6 +175,7 @@ class McpRateLimiter
         $tokens = (float) ($state['tokens'] ?? $capacity);
         $isThrottled = (bool) ($state['is_throttled'] ?? false);
         $throttledAt = (float) ($state['throttled_at'] ?? 0.0);
+        $lastUpdated = (float) ($state['last_updated'] ?? $now);
 
         if ($isThrottled) {
             $elapsed = $now - $throttledAt;
@@ -165,6 +189,13 @@ class McpRateLimiter
             }
             $tokens = (float) $capacity;
             $isThrottled = false;
+        } else {
+            $elapsedSinceLast = $now - $lastUpdated;
+            if ($elapsedSinceLast >= $cooldownSeconds) {
+                $tokens = (float) $capacity;
+            } elseif ($tokens < $capacity && $elapsedSinceLast > 0) {
+                $tokens = min((float) $capacity, $tokens + ($elapsedSinceLast * self::getRefillRate()));
+            }
         }
 
         return [
@@ -176,13 +207,18 @@ class McpRateLimiter
     }
 
     /**
-     * Reset rate limiter for testing.
+     * Reset rate limiter for testing (global and all known tenants).
      */
-    public static function reset(string $identifier = 'tunnel_global'): void
+    public static function reset(?string $identifier = null): void
     {
-        $cacheKey = "mcp:rate_limit:bucket:" . md5($identifier);
-        Cache::forget($cacheKey);
-        // Also forget mcp_tunnel_ingress
+        if ($identifier) {
+            Cache::forget("mcp:rate_limit:bucket:" . md5($identifier));
+            return;
+        }
+
         Cache::forget("mcp:rate_limit:bucket:" . md5('mcp_tunnel_ingress'));
+        Cache::forget("mcp:rate_limit:bucket:" . md5('tunnel_global'));
+        Cache::forget("mcp:rate_limit:bucket:" . md5('tenant_alpha'));
+        Cache::forget("mcp:rate_limit:bucket:" . md5('tenant_beta'));
     }
 }

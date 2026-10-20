@@ -32,5 +32,8 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <env name="MCP_READ_ONLY" value="false"/>
+        <env name="MCP_RATE_LIMIT_ENABLED" value="false"/>
+        <env name="MCP_TENANT_ISOLATION_ENABLED" value="false"/>
     </php>
 </phpunit>

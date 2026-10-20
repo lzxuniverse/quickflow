@@ -146,16 +146,20 @@ class McpServerEngine
                 }
             }
 
-            // -1. Enterprise Infrastructure Defense: Token Bucket Rate Limiter (Anti-DDoS / Anti-Loop)
+            // -1. Enterprise Infrastructure Defense: Token Bucket Rate Limiter (Anti-DDoS & Noisy Neighbor Isolation)
             if (\App\Mcp\Gate\McpRateLimiter::isEnabled()) {
-                // In a public tunnel (ngrok/cloudflare), cloud AI proxies (ChatGPT) rotate egress IPs.
-                // We bind the Token Bucket to the public tunnel ingress to defend local server resources.
-                $clientIdentifier = 'mcp_tunnel_ingress';
-                $rateResult = \App\Mcp\Gate\McpRateLimiter::check($clientIdentifier);
+                // In a multi-tenant public tunnel, bind the Token Bucket to the active tenant capability.
+                // This guarantees Tenant Alpha's burst traffic never starves Tenant Beta (Anti-Noisy Neighbor).
+                $activeTenant = \App\Mcp\Gate\McpTenantContext::getActiveTenant();
+                $clientIdentifier = $activeTenant ? 'tenant_' . $activeTenant['slug'] : 'mcp_tunnel_ingress';
+                $tenantCapacity = $activeTenant['rate_limit_capacity'] ?? \App\Mcp\Gate\McpRateLimiter::getCapacity();
+
+                $rateResult = \App\Mcp\Gate\McpRateLimiter::check($clientIdentifier, $tenantCapacity);
                 if (!$rateResult['allowed']) {
                     $durationMs = round((microtime(true) - $startTime) * 1000, 2);
                     $retryAfter = $rateResult['retry_after'];
-                    $errorMsg = \App\Mcp\Gate\McpRateLimiter::getRejectionMessage($retryAfter);
+                    $tenantName = $activeTenant['name'] ?? null;
+                    $errorMsg = \App\Mcp\Gate\McpRateLimiter::getRejectionMessage($retryAfter, $tenantName);
 
                     $errorPayload = [
                         'error' => $errorMsg,
@@ -163,10 +167,14 @@ class McpServerEngine
                         'tool' => $toolName,
                         '_meta' => [
                             'duration_ms' => $durationMs,
-                            'policy' => 'TOKEN_BUCKET',
+                            'policy' => 'TENANT_TOKEN_BUCKET',
                             'retry_after_seconds' => $retryAfter,
                             'capacity' => $rateResult['capacity'],
                             'remaining' => 0,
+                            'tenant' => $activeTenant ? [
+                                'slug' => strtoupper($activeTenant['slug']),
+                                'name' => $activeTenant['name'],
+                            ] : null,
                         ],
                     ];
 
@@ -299,6 +307,15 @@ class McpServerEngine
                         'capacity' => $rateResult['capacity'],
                         'was_refilled' => $rateResult['was_refilled'],
                         'refilled_tokens' => $rateResult['refilled_tokens'],
+                    ];
+                }
+
+                if (\App\Mcp\Gate\McpTenantContext::hasActiveTenant()) {
+                    $activeTenant = \App\Mcp\Gate\McpTenantContext::getActiveTenant();
+                    $result['_meta']['tenant'] = [
+                        'slug' => strtoupper($activeTenant['slug']),
+                        'name' => $activeTenant['name'],
+                        'id' => $activeTenant['uuid'],
                     ];
                 }
             }
